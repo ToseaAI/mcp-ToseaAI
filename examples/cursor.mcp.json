@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "tosea": {
+      "command": "node",
+      "args": [
+        "C:/new/mcp-ToseaAI/dist/src/index.js"
+      ],
+      "env": {
+        "TOSEA_API_KEY": "sk_replace_me",
+        "TOSEA_API_BASE_URL": "https://tosea.ai"
+      }
+    }
+  }
+}
+

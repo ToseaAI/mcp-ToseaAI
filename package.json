@@ -1,0 +1,42 @@
+{
+  "name": "@tosea-ai/mcp-toseaai",
+  "version": "0.1.0",
+  "description": "Official MCP server for ToseaAI presentation workflows",
+  "type": "module",
+  "bin": {
+    "tosea-mcp": "./dist/src/index.js"
+  },
+  "files": [
+    "dist/src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/index.ts",
+    "smoke": "node scripts/smoke.mjs",
+    "start": "node dist/src/index.js",
+    "test": "tsx --test tests/**/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "mcp",
+    "tosea",
+    "presentations",
+    "pdf",
+    "pptx"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.5",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.2"
+  }
+}

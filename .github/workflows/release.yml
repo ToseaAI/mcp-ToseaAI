@@ -1,0 +1,44 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      - name: Optional non-billing smoke test
+        env:
+          TOSEA_API_KEY: ${{ secrets.TOSEA_API_KEY }}
+          TOSEA_API_BASE_URL: ${{ secrets.TOSEA_API_BASE_URL }}
+        run: |
+          if [ -n "${TOSEA_API_KEY:-}" ]; then
+            npm run smoke
+          else
+            echo "Skipping smoke test because TOSEA_API_KEY is not configured."
+          fi
+
+      - run: npm pack
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: "*.tgz"
+          generate_release_notes: true
+
