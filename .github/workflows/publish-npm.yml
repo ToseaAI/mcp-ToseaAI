@@ -1,6 +1,9 @@
 name: publish-npm
 
 on:
+  push:
+    tags:
+      - "v*"
   release:
     types:
       - published
