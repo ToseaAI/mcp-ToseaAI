@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 
-import { ApiError, JobTimeoutError, extractErrorMessage } from "./errors.js";
+import {
+  ApiError,
+  JobTimeoutError,
+  TransportError,
+  extractErrorMessage,
+  normalizeRequestError
+} from "./errors.js";
 import type {
   ApiEnvelope,
   ClientConfig,
@@ -30,12 +36,42 @@ function canRetry(method: string, retryMode: RequestOptions["retryMode"]): boole
   return method === "GET";
 }
 
-async function parseResponseBody<T>(response: Response): Promise<ApiEnvelope<T> | undefined> {
-  const contentType = response.headers.get("content-type") || "";
-  if (contentType.includes("application/json")) {
-    return (await response.json()) as ApiEnvelope<T>;
+function asJobResult(value: unknown): JobResult | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
   }
-  return undefined;
+  return value as JobResult;
+}
+
+function resolveJobStatus(payload: JobResult): string {
+  const nestedJob = asJobResult(payload.job);
+  const nestedStatus = typeof nestedJob?.status === "string" ? nestedJob.status : "";
+  if (nestedStatus) {
+    return nestedStatus;
+  }
+  return typeof payload.status === "string" ? payload.status : "";
+}
+
+async function parseResponseBody<T>(
+  response: Response
+): Promise<{ envelope?: ApiEnvelope<T>; raw?: unknown; rawText?: string }> {
+  const contentType = response.headers.get("content-type") || "";
+  const rawText = await response.text();
+  if (!rawText) {
+    return {};
+  }
+  if (contentType.includes("application/json")) {
+    try {
+      const raw = JSON.parse(rawText) as unknown;
+      if (raw && typeof raw === "object") {
+        return { envelope: raw as ApiEnvelope<T>, raw, rawText };
+      }
+      return { raw, rawText };
+    } catch {
+      return { rawText };
+    }
+  }
+  return { rawText };
 }
 
 export class ToseaClient {
@@ -62,10 +98,20 @@ export class ToseaClient {
     return this.request(path, { method: "GET", retryMode: "safe" });
   }
 
-  async listPresentations(limit = 20, offset = 0): Promise<ApiEnvelope<Record<string, unknown>>> {
+  async listPresentations(input: {
+    page?: number;
+    perPage?: number;
+    status?: string;
+    search?: string;
+  } = {}): Promise<ApiEnvelope<Record<string, unknown>>> {
     return this.request("/presentations", {
       method: "GET",
-      query: { limit, offset },
+      query: {
+        page: input.page ?? 1,
+        per_page: input.perPage ?? 20,
+        status: input.status,
+        search: input.search
+      },
       retryMode: "safe"
     });
   }
@@ -89,7 +135,7 @@ export class ToseaClient {
   async waitForJob(
     presentationId: string,
     options: WaitForJobOptions = {}
-  ): Promise<{ completed: boolean; final_status: JobResult }> {
+  ): Promise<{ completed: boolean; terminal_status: string; final_status: JobResult }> {
     const timeoutMs = options.timeoutMs ?? 15 * 60_000;
     let intervalMs = options.pollIntervalMs ?? this.config.pollIntervalMs;
     const maxIntervalMs = options.maxPollIntervalMs ?? this.config.maxPollIntervalMs;
@@ -97,12 +143,13 @@ export class ToseaClient {
 
     while (Date.now() - startedAt < timeoutMs) {
       const envelope = await this.getJobStatus(presentationId);
-      const job = envelope.data ?? {};
-      const status = String(job.status || "");
-      if (status === "completed" || status === "failed") {
+      const payload = envelope.data ?? {};
+      const terminalStatus = resolveJobStatus(payload);
+      if (terminalStatus === "completed" || terminalStatus === "failed" || terminalStatus === "cancelled") {
         return {
-          completed: status === "completed",
-          final_status: job
+          completed: terminalStatus === "completed",
+          terminal_status: terminalStatus,
+          final_status: payload
         };
       }
       await sleep(withJitter(intervalMs));
@@ -119,16 +166,21 @@ export class ToseaClient {
     instruction?: string;
     renderProvider?: string;
     renderModel?: string;
+    imageModel?: string | undefined;
     slideDomain?: string;
     pageCountRange?: string;
     templateName?: string;
     slideMode?: string;
+    idempotencyKey?: string | undefined;
   }): Promise<ApiEnvelope<Record<string, unknown>>> {
     const formData = new FormData();
     await appendFilesToFormData(formData, input.filePaths);
     formData.set("instruction", input.instruction ?? "");
     formData.set("render_provider", input.renderProvider ?? "default");
     formData.set("render_model", input.renderModel ?? "deepseek-chat-v3.1");
+    if (input.imageModel) {
+      formData.set("image_model", input.imageModel);
+    }
     formData.set("slide_domain", input.slideDomain ?? "general");
     formData.set("page_count_range", input.pageCountRange ?? "8-12");
     formData.set("template_name", input.templateName ?? "beamer_classic");
@@ -137,6 +189,7 @@ export class ToseaClient {
     return this.request("/pdf-parse", {
       method: "POST",
       formData,
+      ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
       retryMode: "never"
     });
   }
@@ -185,6 +238,8 @@ export class ToseaClient {
   async renderSlides(input: {
     presentationId: string;
     renderProvider?: string | undefined;
+    renderModel?: string | undefined;
+    imageModel?: string | undefined;
     force?: boolean | undefined;
     slidesToGenerate?: number[] | undefined;
   }): Promise<ApiEnvelope<Record<string, unknown>>> {
@@ -193,6 +248,8 @@ export class ToseaClient {
       body: {
         presentation_id: input.presentationId,
         render_provider: input.renderProvider ?? undefined,
+        render_model: input.renderModel ?? undefined,
+        image_model: input.imageModel ?? undefined,
         force: input.force ?? false,
         slides_to_generate: input.slidesToGenerate
       },
@@ -233,7 +290,7 @@ export class ToseaClient {
 
   async exportPresentation(input: {
     presentationId: string;
-    outputFormat: "pdf" | "pptx" | "pptx_image";
+    outputFormat: "pdf" | "pptx" | "pptx_image" | "html_zip";
     idempotencyKey?: string | undefined;
   }): Promise<ApiEnvelope<Record<string, unknown>>> {
     return this.request("/export", {
@@ -253,10 +310,12 @@ export class ToseaClient {
     outputFormat?: "pdf" | "pptx" | "pptx_image";
     renderProvider?: string;
     renderModel?: string;
+    imageModel?: string | undefined;
     slideDomain?: string;
     pageCountRange?: string;
     templateName?: string;
     slideMode?: string;
+    idempotencyKey?: string | undefined;
   }): Promise<ApiEnvelope<Record<string, unknown>>> {
     const formData = new FormData();
     await appendFilesToFormData(formData, input.filePaths);
@@ -264,6 +323,9 @@ export class ToseaClient {
     formData.set("output_format", input.outputFormat ?? "pptx");
     formData.set("render_provider", input.renderProvider ?? "default");
     formData.set("render_model", input.renderModel ?? "deepseek-chat-v3.1");
+    if (input.imageModel) {
+      formData.set("image_model", input.imageModel);
+    }
     formData.set("slide_domain", input.slideDomain ?? "general");
     formData.set("page_count_range", input.pageCountRange ?? "8-12");
     formData.set("template_name", input.templateName ?? "beamer_classic");
@@ -272,6 +334,7 @@ export class ToseaClient {
     return this.request("/pdf-to-presentation", {
       method: "POST",
       formData,
+      ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
       retryMode: "never"
     });
   }
@@ -289,7 +352,7 @@ export class ToseaClient {
 
   async redownloadExport(input: {
     presentationId: string;
-    exportType: "pdf" | "pptx" | "pptx_image";
+    exportType: "pdf" | "pptx" | "pptx_image" | "html_zip";
     filename: string;
   }): Promise<ApiEnvelope<Record<string, unknown>>> {
     return this.request(`/exports/${input.presentationId}/download/${input.exportType}`, {
@@ -345,13 +408,14 @@ export class ToseaClient {
         }
 
         const response = await this.fetchImpl(url, requestInit);
-
-        const envelope = await parseResponseBody<T>(response);
+        const parsedBody = await parseResponseBody<T>(response);
+        const envelope = parsedBody.envelope;
         if (!response.ok) {
-          const clonedBody = await response.clone().json().catch(() => undefined);
           const errorDetail =
-            (clonedBody as { detail?: unknown } | undefined)?.detail ??
+            (parsedBody.raw as { detail?: unknown } | undefined)?.detail ??
             (envelope as { detail?: unknown } | undefined)?.detail ??
+            parsedBody.raw ??
+            parsedBody.rawText ??
             envelope;
           const retryAfterHeader = response.headers.get("retry-after");
           const retryAfterMs = retryAfterHeader
@@ -384,11 +448,15 @@ export class ToseaClient {
         }
         return envelope;
       } catch (error) {
+        const normalizedError = normalizeRequestError(error, path);
         if (attempt + 1 >= maxAttempts) {
-          throw error;
+          throw normalizedError;
         }
-        if (error instanceof ApiError && !error.isRetryable) {
-          throw error;
+        if (
+          (normalizedError instanceof ApiError && !normalizedError.isRetryable) ||
+          (normalizedError instanceof TransportError && !normalizedError.isRetryable)
+        ) {
+          throw normalizedError;
         }
 
         await sleep(withJitter(500 * (attempt + 1)));

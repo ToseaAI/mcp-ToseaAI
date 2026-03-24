@@ -35,10 +35,10 @@ async function main() {
   const health = await client.health();
   const permissions = await client.getPermissionsSummary();
   const quota = await client.getQuotaStatus(args.featureKey);
-  const presentations = await client.listPresentations(
-    Number.isFinite(args.listLimit) && args.listLimit > 0 ? args.listLimit : 3,
-    0
-  );
+  const presentations = await client.listPresentations({
+    page: 1,
+    perPage: Number.isFinite(args.listLimit) && args.listLimit > 0 ? args.listLimit : 3
+  });
 
   const tier = permissions.data?.user_tier;
   if (args.expectTier && tier !== args.expectTier) {

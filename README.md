@@ -35,6 +35,9 @@ Optional:
 
 - `TOSEA_TIMEOUT_MS`
 - `TOSEA_MAX_RETRIES`
+- `TOSEA_MAX_TOOL_CONCURRENCY`
+- `TOSEA_MAX_MUTATING_CONCURRENCY`
+- `TOSEA_MAX_PENDING_TOOL_REQUESTS`
 - `TOSEA_POLL_INTERVAL_MS`
 - `TOSEA_MAX_POLL_MS`
 - `TOSEA_LOG_LEVEL`
@@ -46,7 +49,7 @@ Optional:
   "mcpServers": {
     "tosea": {
       "command": "node",
-      "args": ["C:/new/mcp-ToseaAI/dist/index.js"],
+      "args": ["C:/new/mcp-ToseaAI/dist/src/index.js"],
       "env": {
         "TOSEA_API_KEY": "sk_...",
         "TOSEA_API_BASE_URL": "https://tosea.ai"
@@ -90,9 +93,14 @@ If you later need OpenAI Responses API hosted remote MCP mode, add a separate St
 ## Reliability model
 
 - `GET` requests use bounded retries with backoff and jitter.
-- Upload-creating endpoints do not auto-retry because the current backend does not accept idempotency keys on those routes.
+- Read-only tools use `singleflight` coalescing for identical in-flight requests, so repeated concurrent calls like the same `list_presentations` query are collapsed into one upstream request.
+- All tools use bounded local concurrency inside one MCP server process; once the local queue is full, the MCP server returns a retryable backpressure error instead of letting requests pile up until transport-level failure.
+- Mutating tools are locally gated with bounded concurrency, and writes for the same `presentation_id` are serialized inside one MCP server process.
+- Upload-creating endpoints (`pdf-parse`, `pdf-to-presentation`) accept `idempotency_key`, but the MCP server still avoids silent auto-retries for large uploads by default.
 - `outline edit`, `slide edit`, and `export` support `idempotency_key`; reuse the same value only when retrying the same logical action.
-- `wait_for_job` polls until `completed` or `failed`, then returns the final job payload as JSON.
+- `wait_for_job` follows nested `data.job.status` when the backend reports a separate export/full job, and falls back to top-level presentation status when no nested job exists.
+- `html_zip` export is supported for HTML-mode decks and remains a free export on the backend.
+- Stdio lifecycle is tied to the host process: the server shuts down on `stdin` close, `SIGINT`, and `SIGTERM`, and unexpected transport failures are surfaced as retryable host-transport errors instead of opaque raw exceptions.
 
 ## Security notes
 

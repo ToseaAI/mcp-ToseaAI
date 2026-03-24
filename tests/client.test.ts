@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { loadConfig } from "../src/config.js";
+import { ApiError, TransportError } from "../src/errors.js";
 import { ToseaClient } from "../src/http.js";
 
 test("loadConfig normalizes base url and validates API key prefix", () => {
@@ -55,7 +59,53 @@ test("exportPresentation forwards idempotency header", async () => {
   assert.match(requests[0]?.url || "", /\/api\/mcp\/v1\/export$/);
 });
 
-test("waitForJob polls until completion", async () => {
+test("waitForJob follows nested job status for export and does not finish early", async () => {
+  let callCount = 0;
+  const client = new ToseaClient(
+    loadConfig({
+      TOSEA_API_KEY: "sk_wait_value",
+      TOSEA_API_BASE_URL: "https://tosea.ai",
+      TOSEA_POLL_INTERVAL_MS: "1",
+      TOSEA_MAX_POLL_MS: "1"
+    }),
+    (async () => {
+      callCount += 1;
+      const jobStatus = callCount >= 2 ? "completed" : "running";
+      return new Response(
+        JSON.stringify({
+          success: true,
+          data: {
+            presentation_id: "8af3c601-7f0f-4fd2-bd36-45dbb3d2c1a0",
+            status: "completed",
+            job: {
+              status: jobStatus,
+              export_type: "pptx",
+              filename: jobStatus === "completed" ? "deck.pptx" : null
+            }
+          }
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        }
+      );
+    }) as typeof fetch
+  );
+
+  const result = await client.waitForJob("8af3c601-7f0f-4fd2-bd36-45dbb3d2c1a0", {
+    timeoutMs: 100,
+    pollIntervalMs: 1,
+    maxPollIntervalMs: 1
+  });
+
+  assert.equal(result.completed, true);
+  assert.equal(result.terminal_status, "completed");
+  assert.equal(result.final_status.status, "completed");
+  assert.equal(result.final_status.job?.status, "completed");
+  assert.equal(callCount, 2);
+});
+
+test("waitForJob falls back to top-level presentation status when nested job is absent", async () => {
   let callCount = 0;
   const client = new ToseaClient(
     loadConfig({
@@ -90,6 +140,172 @@ test("waitForJob polls until completion", async () => {
   });
 
   assert.equal(result.completed, true);
-  assert.equal(result.final_status.status, "completed");
+  assert.equal(result.terminal_status, "completed");
   assert.equal(callCount, 2);
+});
+
+test("request normalizes JSON API errors without consuming the body twice", async () => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "tosea-mcp-test-"));
+  const pdfPath = path.join(tempDir, "source.pdf");
+  await writeFile(pdfPath, Buffer.from("%PDF-1.4\n%mock\n", "utf-8"));
+  const client = new ToseaClient(
+    loadConfig({
+      TOSEA_API_KEY: "sk_error_value",
+      TOSEA_API_BASE_URL: "https://tosea.ai"
+    }),
+    (async () => {
+      return new Response(
+        JSON.stringify({
+          detail: {
+            error: "insufficient_credits",
+            message: "Insufficient credits for pdf_to_presentation.",
+            operation: "pdf_to_presentation",
+            required: 3,
+            available: 0
+          }
+        }),
+        {
+          status: 402,
+          headers: { "content-type": "application/json" }
+        }
+      );
+    }) as typeof fetch
+  );
+
+  try {
+    await assert.rejects(
+      () =>
+        client.pdfToPresentation({
+          filePaths: [pdfPath],
+          outputFormat: "pptx"
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof ApiError);
+        assert.equal(error.status, 402);
+        assert.equal(
+          (error.detail as { message?: string }).message,
+          "Insufficient credits for pdf_to_presentation."
+        );
+        return true;
+      }
+    );
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("request normalizes terminated transport failures into retryable transport errors", async () => {
+  const client = new ToseaClient(
+    loadConfig({
+      TOSEA_API_KEY: "sk_transport_value",
+      TOSEA_API_BASE_URL: "https://tosea.ai"
+    }),
+    (async () => {
+      throw new TypeError("terminated");
+    }) as typeof fetch
+  );
+
+  await assert.rejects(
+    () =>
+      client.exportPresentation({
+        presentationId: "13bb5c96-0ef0-42b5-b463-3c1d7e17c507",
+        outputFormat: "pdf",
+        idempotencyKey: "retry-transport-1"
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof TransportError);
+      assert.equal(error.isRetryable, true);
+      assert.match(error.message, /Retry with the same idempotency key/i);
+      return true;
+    }
+  );
+});
+
+test("pdfToPresentation forwards idempotency header when provided", async () => {
+  const requests: Array<{ headers: HeadersInit | undefined }> = [];
+  const client = new ToseaClient(
+    loadConfig({
+      TOSEA_API_KEY: "sk_idem_value",
+      TOSEA_API_BASE_URL: "https://tosea.ai"
+    }),
+    (async (_input, init) => {
+      requests.push({ headers: init?.headers });
+      return new Response(
+        JSON.stringify({
+          success: true,
+          data: {
+            presentation_id: "23c6b662-3a5a-49fb-a9d2-21a66bd5355c",
+            job: { status: "queued" }
+          }
+        }),
+        {
+          status: 202,
+          headers: { "content-type": "application/json" }
+        }
+      );
+    }) as typeof fetch
+  );
+
+  const tempDir = await mkdtemp(path.join(tmpdir(), "tosea-mcp-test-"));
+  const pdfPath = path.join(tempDir, "source.pdf");
+  await writeFile(pdfPath, Buffer.from("%PDF-1.4\n%mock\n", "utf-8"));
+
+  try {
+    await client.pdfToPresentation({
+      filePaths: [pdfPath],
+      outputFormat: "pptx",
+      idempotencyKey: "oneshot-retry-1"
+    });
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+
+  const headers = new Headers(requests[0]?.headers);
+  assert.equal(headers.get("x-idempotency-key"), "oneshot-retry-1");
+});
+
+test("image-mode parse forwards image_model in multipart form data", async () => {
+  const bodies: FormData[] = [];
+  const client = new ToseaClient(
+    loadConfig({
+      TOSEA_API_KEY: "sk_image_parse_value",
+      TOSEA_API_BASE_URL: "https://tosea.ai"
+    }),
+    (async (_input, init) => {
+      bodies.push(init?.body as FormData);
+      return new Response(
+        JSON.stringify({
+          success: true,
+          data: {
+            presentation_id: "23c6b662-3a5a-49fb-a9d2-21a66bd5355c",
+            job: { status: "queued" }
+          }
+        }),
+        {
+          status: 202,
+          headers: { "content-type": "application/json" }
+        }
+      );
+    }) as typeof fetch
+  );
+
+  const tempDir = await mkdtemp(path.join(tmpdir(), "tosea-mcp-test-"));
+  const pdfPath = path.join(tempDir, "source.pdf");
+  await writeFile(pdfPath, Buffer.from("%PDF-1.4\n%mock\n", "utf-8"));
+
+  try {
+    await client.pdfParse({
+      filePaths: [pdfPath],
+      slideMode: "image",
+      renderModel: "gemini-3.1-pro-preview",
+      imageModel: "gemini-3.1-flash-image-preview"
+    });
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+
+  assert.equal(bodies.length, 1);
+  assert.equal(bodies[0]?.get("slide_mode"), "image");
+  assert.equal(bodies[0]?.get("render_model"), "gemini-3.1-pro-preview");
+  assert.equal(bodies[0]?.get("image_model"), "gemini-3.1-flash-image-preview");
 });

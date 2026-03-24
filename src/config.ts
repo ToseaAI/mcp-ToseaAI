@@ -43,9 +43,23 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ClientConfig {
     mcpApiBaseUrl: normalizeMcpApiBaseUrl(env.TOSEA_API_BASE_URL),
     timeoutMs: toPositiveInt("TOSEA_TIMEOUT_MS", env.TOSEA_TIMEOUT_MS, 45_000),
     maxRetries: toPositiveInt("TOSEA_MAX_RETRIES", env.TOSEA_MAX_RETRIES, 2),
+    maxToolConcurrency: toPositiveInt(
+      "TOSEA_MAX_TOOL_CONCURRENCY",
+      env.TOSEA_MAX_TOOL_CONCURRENCY,
+      8
+    ),
+    maxMutatingConcurrency: toPositiveInt(
+      "TOSEA_MAX_MUTATING_CONCURRENCY",
+      env.TOSEA_MAX_MUTATING_CONCURRENCY,
+      4
+    ),
+    maxPendingToolRequests: toPositiveInt(
+      "TOSEA_MAX_PENDING_TOOL_REQUESTS",
+      env.TOSEA_MAX_PENDING_TOOL_REQUESTS,
+      32
+    ),
     pollIntervalMs: toPositiveInt("TOSEA_POLL_INTERVAL_MS", env.TOSEA_POLL_INTERVAL_MS, 2_000),
     maxPollIntervalMs: toPositiveInt("TOSEA_MAX_POLL_MS", env.TOSEA_MAX_POLL_MS, 10_000),
     logLevel: logLevel as ClientConfig["logLevel"],
   };
 }
-

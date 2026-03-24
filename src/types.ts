@@ -20,6 +20,9 @@ export interface ClientConfig {
   mcpApiBaseUrl: string;
   timeoutMs: number;
   maxRetries: number;
+  maxToolConcurrency: number;
+  maxMutatingConcurrency: number;
+  maxPendingToolRequests: number;
   pollIntervalMs: number;
   maxPollIntervalMs: number;
   logLevel: "debug" | "info" | "warn" | "error";
@@ -45,17 +48,21 @@ export interface JobResult {
   presentation_id?: string;
   workflow?: string;
   status?: string;
+  progress?: number;
   current_step?: string | null;
   error?: string | null;
+  error_message?: string | null;
   download_url?: string | null;
   filename?: string | null;
   export_type?: string | null;
+  slides_count?: number | null;
+  total_pages?: number | null;
   created_at?: string;
   updated_at?: string;
   steps_completed?: string[];
   active?: boolean;
+  job?: JobResult | null;
   [key: string]: unknown;
 }
 
 export type FetchLike = typeof fetch;
-
