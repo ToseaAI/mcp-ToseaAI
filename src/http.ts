@@ -291,13 +291,15 @@ export class ToseaClient {
   async exportPresentation(input: {
     presentationId: string;
     outputFormat: "pdf" | "pptx" | "pptx_image" | "html_zip";
+    exportFilename?: string | undefined;
     idempotencyKey?: string | undefined;
   }): Promise<ApiEnvelope<Record<string, unknown>>> {
     return this.request("/export", {
       method: "POST",
       body: {
         presentation_id: input.presentationId,
-        output_format: input.outputFormat
+        output_format: input.outputFormat,
+        export_filename: input.exportFilename
       },
       idempotencyKey: input.idempotencyKey ?? randomUUID(),
       retryMode: "idempotent"
@@ -308,6 +310,7 @@ export class ToseaClient {
     filePaths: string[];
     instruction?: string;
     outputFormat?: "pdf" | "pptx" | "pptx_image";
+    exportFilename?: string | undefined;
     renderProvider?: string;
     renderModel?: string;
     imageModel?: string | undefined;
@@ -321,6 +324,9 @@ export class ToseaClient {
     await appendFilesToFormData(formData, input.filePaths);
     formData.set("instruction", input.instruction ?? "");
     formData.set("output_format", input.outputFormat ?? "pptx");
+    if (input.exportFilename) {
+      formData.set("export_filename", input.exportFilename);
+    }
     formData.set("render_provider", input.renderProvider ?? "default");
     formData.set("render_model", input.renderModel ?? "deepseek-chat-v3.1");
     if (input.imageModel) {

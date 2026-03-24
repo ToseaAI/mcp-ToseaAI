@@ -388,14 +388,16 @@ export function createToseaServer(config: ClientConfig, fetchImpl?: FetchLike): 
     {
       presentation_id: z.string().uuid(),
       output_format: z.enum(["pdf", "pptx", "pptx_image", "html_zip"]),
+      export_filename: z.string().min(1).max(255).optional(),
       idempotency_key: z.string().min(8).optional()
     },
-    async ({ presentation_id, output_format, idempotency_key }) => {
+    async ({ presentation_id, output_format, export_filename, idempotency_key }) => {
       return await runMutating(
         () =>
           client.exportPresentation({
             presentationId: presentation_id,
             outputFormat: output_format,
+            exportFilename: export_filename,
             idempotencyKey: idempotency_key
           }),
         presentation_id
@@ -410,6 +412,7 @@ export function createToseaServer(config: ClientConfig, fetchImpl?: FetchLike): 
       file_paths: z.array(z.string().min(1)).min(1).max(10),
       instruction: z.string().default(""),
       output_format: z.enum(["pdf", "pptx", "pptx_image"]).default("pptx"),
+      export_filename: z.string().min(1).max(255).optional(),
       render_provider: z.string().default("default"),
       render_model: z.string().default("deepseek-chat-v3.1"),
       image_model: z.string().optional(),
@@ -423,6 +426,7 @@ export function createToseaServer(config: ClientConfig, fetchImpl?: FetchLike): 
       file_paths,
       instruction,
       output_format,
+      export_filename,
       render_provider,
       render_model,
       image_model,
@@ -437,6 +441,7 @@ export function createToseaServer(config: ClientConfig, fetchImpl?: FetchLike): 
           filePaths: file_paths,
           instruction,
           outputFormat: output_format,
+          exportFilename: export_filename,
           renderProvider: render_provider,
           renderModel: render_model,
           imageModel: image_model,

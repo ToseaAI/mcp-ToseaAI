@@ -18,8 +18,8 @@ test("loadConfig normalizes base url and validates API key prefix", () => {
   assert.equal(config.apiKey, "sk_example_value");
 });
 
-test("exportPresentation forwards idempotency header", async () => {
-  const requests: Array<{ url: string; headers: HeadersInit | undefined }> = [];
+test("exportPresentation forwards idempotency header and export filename", async () => {
+  const requests: Array<{ url: string; headers: HeadersInit | undefined; body: string | undefined }> = [];
   const client = new ToseaClient(
     loadConfig({
       TOSEA_API_KEY: "sk_export_value",
@@ -28,7 +28,8 @@ test("exportPresentation forwards idempotency header", async () => {
     (async (input, init) => {
       requests.push({
         url: String(input),
-        headers: init?.headers
+        headers: init?.headers,
+        body: typeof init?.body === "string" ? init.body : undefined
       });
       return new Response(
         JSON.stringify({
@@ -49,6 +50,7 @@ test("exportPresentation forwards idempotency header", async () => {
   await client.exportPresentation({
     presentationId: "13bb5c96-0ef0-42b5-b463-3c1d7e17c507",
     outputFormat: "pptx",
+    exportFilename: "board_update_final.pptx",
     idempotencyKey: "export-1"
   });
 
@@ -57,6 +59,7 @@ test("exportPresentation forwards idempotency header", async () => {
   assert.equal(headers.get("authorization"), "Bearer sk_export_value");
   assert.equal(headers.get("x-idempotency-key"), "export-1");
   assert.match(requests[0]?.url || "", /\/api\/mcp\/v1\/export$/);
+  assert.match(requests[0]?.body || "", /"export_filename":"board_update_final\.pptx"/);
 });
 
 test("waitForJob follows nested job status for export and does not finish early", async () => {
@@ -262,6 +265,49 @@ test("pdfToPresentation forwards idempotency header when provided", async () => 
 
   const headers = new Headers(requests[0]?.headers);
   assert.equal(headers.get("x-idempotency-key"), "oneshot-retry-1");
+});
+
+test("pdfToPresentation forwards export_filename in multipart form data", async () => {
+  const bodies: FormData[] = [];
+  const client = new ToseaClient(
+    loadConfig({
+      TOSEA_API_KEY: "sk_export_form_value",
+      TOSEA_API_BASE_URL: "https://tosea.ai"
+    }),
+    (async (_input, init) => {
+      bodies.push(init?.body as FormData);
+      return new Response(
+        JSON.stringify({
+          success: true,
+          data: {
+            presentation_id: "23c6b662-3a5a-49fb-a9d2-21a66bd5355c",
+            job: { status: "queued" }
+          }
+        }),
+        {
+          status: 202,
+          headers: { "content-type": "application/json" }
+        }
+      );
+    }) as typeof fetch
+  );
+
+  const tempDir = await mkdtemp(path.join(tmpdir(), "tosea-mcp-test-"));
+  const pdfPath = path.join(tempDir, "source.pdf");
+  await writeFile(pdfPath, Buffer.from("%PDF-1.4\n%mock\n", "utf-8"));
+
+  try {
+    await client.pdfToPresentation({
+      filePaths: [pdfPath],
+      outputFormat: "pptx",
+      exportFilename: "executive_review_final.pptx"
+    });
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+
+  assert.equal(bodies.length, 1);
+  assert.equal(bodies[0]?.get("export_filename"), "executive_review_final.pptx");
 });
 
 test("image-mode parse forwards image_model in multipart form data", async () => {

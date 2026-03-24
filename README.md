@@ -7,6 +7,7 @@ This server wraps the production ToseaAI HTTP contract at `/api/mcp/v1` and expo
 - API keys stay server-side and are never echoed back to the agent.
 - Long-running operations use `presentation_id` plus polling, not raw SSE.
 - Mutating tools support explicit idempotency keys where the backend supports them.
+- Export-capable tools accept an optional `export_filename` so downstream clients can receive a friendly attachment name.
 - File uploads stay local until the MCP server streams them to ToseaAI over HTTPS.
 
 ## Why a separate repo
@@ -98,9 +99,18 @@ If you later need OpenAI Responses API hosted remote MCP mode, add a separate St
 - Mutating tools are locally gated with bounded concurrency, and writes for the same `presentation_id` are serialized inside one MCP server process.
 - Upload-creating endpoints (`pdf-parse`, `pdf-to-presentation`) accept `idempotency_key`, but the MCP server still avoids silent auto-retries for large uploads by default.
 - `outline edit`, `slide edit`, and `export` support `idempotency_key`; reuse the same value only when retrying the same logical action.
+- `tosea_export_presentation` and `tosea_pdf_to_presentation` accept optional `export_filename` when the visible exported attachment name matters.
 - `wait_for_job` follows nested `data.job.status` when the backend reports a separate export/full job, and falls back to top-level presentation status when no nested job exists.
 - `html_zip` export is supported for HTML-mode decks and remains a free export on the backend.
 - Stdio lifecycle is tied to the host process: the server shuts down on `stdin` close, `SIGINT`, and `SIGTERM`, and unexpected transport failures are surfaced as retryable host-transport errors instead of opaque raw exceptions.
+
+## Attachment delivery
+
+If an MCP client downloads a finished export and then relays it through OpenClaw, WeChat, email, or another chat surface:
+
+- pass `export_filename` when the user cares about the final visible attachment name
+- preserve filename, extension, and `Content-Type` when re-uploading the artifact
+- do not repackage the file as an anonymous binary attachment, or downstream clients may show only a generic attachment label
 
 ## Security notes
 
