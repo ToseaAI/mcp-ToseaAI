@@ -310,6 +310,58 @@ test("pdfToPresentation forwards export_filename in multipart form data", async 
   assert.equal(bodies[0]?.get("export_filename"), "executive_review_final.pptx");
 });
 
+test("pdfToPresentation forwards image-mode fields in multipart form data", async () => {
+  const bodies: FormData[] = [];
+  const client = new ToseaClient(
+    loadConfig({
+      TOSEA_API_KEY: "sk_image_oneshot_value",
+      TOSEA_API_BASE_URL: "https://tosea.ai"
+    }),
+    (async (_input, init) => {
+      bodies.push(init?.body as FormData);
+      return new Response(
+        JSON.stringify({
+          success: true,
+          data: {
+            presentation_id: "23c6b662-3a5a-49fb-a9d2-21a66bd5355c",
+            job: { status: "queued" }
+          }
+        }),
+        {
+          status: 202,
+          headers: { "content-type": "application/json" }
+        }
+      );
+    }) as typeof fetch
+  );
+
+  const tempDir = await mkdtemp(path.join(tmpdir(), "tosea-mcp-test-"));
+  const pdfPath = path.join(tempDir, "source.pdf");
+  await writeFile(pdfPath, Buffer.from("%PDF-1.4\n%mock\n", "utf-8"));
+
+  try {
+    await client.pdfToPresentation({
+      filePaths: [pdfPath],
+      outputFormat: "pptx_image",
+      slideMode: "image",
+      imageModel: "gemini-3.1-flash-image-preview",
+      logoFileId: "61d9ccea-22aa-4c4c-b6ef-f6c5ebf3c337",
+      templateFileId: "f6172bc9-7ae5-45b1-8df8-ae4453170748",
+      exportFilename: "image_board_final.pptx"
+    });
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+
+  assert.equal(bodies.length, 1);
+  assert.equal(bodies[0]?.get("output_format"), "pptx_image");
+  assert.equal(bodies[0]?.get("slide_mode"), "image");
+  assert.equal(bodies[0]?.get("image_model"), "gemini-3.1-flash-image-preview");
+  assert.equal(bodies[0]?.get("logo_file_id"), "61d9ccea-22aa-4c4c-b6ef-f6c5ebf3c337");
+  assert.equal(bodies[0]?.get("template_file_id"), "f6172bc9-7ae5-45b1-8df8-ae4453170748");
+  assert.equal(bodies[0]?.get("export_filename"), "image_board_final.pptx");
+});
+
 test("image-mode parse forwards image_model in multipart form data", async () => {
   const bodies: FormData[] = [];
   const client = new ToseaClient(
@@ -344,7 +396,9 @@ test("image-mode parse forwards image_model in multipart form data", async () =>
       filePaths: [pdfPath],
       slideMode: "image",
       renderModel: "gemini-3.1-pro-preview",
-      imageModel: "gemini-3.1-flash-image-preview"
+      imageModel: "gemini-3.1-flash-image-preview",
+      logoFileId: "c5097024-b81e-4b4d-9d70-16b390d266bf",
+      templateFileId: "3f6d5bd0-2533-45ea-a5c9-28956df9ae87"
     });
   } finally {
     await rm(tempDir, { recursive: true, force: true });
@@ -354,4 +408,6 @@ test("image-mode parse forwards image_model in multipart form data", async () =>
   assert.equal(bodies[0]?.get("slide_mode"), "image");
   assert.equal(bodies[0]?.get("render_model"), "gemini-3.1-pro-preview");
   assert.equal(bodies[0]?.get("image_model"), "gemini-3.1-flash-image-preview");
+  assert.equal(bodies[0]?.get("logo_file_id"), "c5097024-b81e-4b4d-9d70-16b390d266bf");
+  assert.equal(bodies[0]?.get("template_file_id"), "3f6d5bd0-2533-45ea-a5c9-28956df9ae87");
 });

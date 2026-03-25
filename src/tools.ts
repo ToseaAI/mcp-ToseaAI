@@ -200,7 +200,7 @@ export function createToseaServer(config: ClientConfig, fetchImpl?: FetchLike): 
 
   server.tool(
     "tosea_parse_pdf",
-    "Upload local files and run the parse-only stage. Returns a presentation_id and job payload.",
+    "Upload local source files and run the parse-only stage. Use logo_file_id for a previously confirmed logo upload. Use template_file_id only with slide_mode='image'; it points to a previously confirmed custom-template upload, not a source document.",
     {
       file_paths: z.array(z.string().min(1)).min(1).max(10),
       instruction: z.string().default(""),
@@ -210,6 +210,8 @@ export function createToseaServer(config: ClientConfig, fetchImpl?: FetchLike): 
       slide_domain: z.string().default("general"),
       page_count_range: pageCountRangeSchema.default("8-12"),
       template_name: z.string().default("beamer_classic"),
+      logo_file_id: z.string().uuid().optional(),
+      template_file_id: z.string().uuid().optional(),
       slide_mode: z.enum(["html", "image"]).default("html"),
       idempotency_key: z.string().min(8).optional()
     },
@@ -222,6 +224,8 @@ export function createToseaServer(config: ClientConfig, fetchImpl?: FetchLike): 
       slide_domain,
       page_count_range,
       template_name,
+      logo_file_id,
+      template_file_id,
       slide_mode,
       idempotency_key
     }) => {
@@ -235,6 +239,8 @@ export function createToseaServer(config: ClientConfig, fetchImpl?: FetchLike): 
           slideDomain: slide_domain,
           pageCountRange: page_count_range,
           templateName: template_name,
+          logoFileId: logo_file_id,
+          templateFileId: template_file_id,
           slideMode: slide_mode,
           idempotencyKey: idempotency_key
         })
@@ -384,7 +390,7 @@ export function createToseaServer(config: ClientConfig, fetchImpl?: FetchLike): 
 
   server.tool(
     "tosea_export_presentation",
-    "Queue an export job for a completed presentation.",
+    "Queue an export job for a completed presentation. Use output_format='pptx_image' when an image-mode deck must be delivered as a pure image-based PPTX. Use html_zip only for HTML-mode decks.",
     {
       presentation_id: z.string().uuid(),
       output_format: z.enum(["pdf", "pptx", "pptx_image", "html_zip"]),
@@ -407,7 +413,7 @@ export function createToseaServer(config: ClientConfig, fetchImpl?: FetchLike): 
 
   server.tool(
     "tosea_pdf_to_presentation",
-    "Upload local files and generate a final export in one shot.",
+    "Upload local source files and generate a final export in one shot. Keep slide_mode='html' by default. Use slide_mode='image' only when the user explicitly wants image-mode rendering. Use template_file_id only with slide_mode='image'; it points to a previously confirmed custom-template upload, not a source document. Use logo_file_id for a previously confirmed logo upload. Choose output_format='pptx_image' when the user wants an image-based PPTX export.",
     {
       file_paths: z.array(z.string().min(1)).min(1).max(10),
       instruction: z.string().default(""),
@@ -419,6 +425,8 @@ export function createToseaServer(config: ClientConfig, fetchImpl?: FetchLike): 
       slide_domain: z.string().default("general"),
       page_count_range: pageCountRangeSchema.default("8-12"),
       template_name: z.string().default("beamer_classic"),
+      logo_file_id: z.string().uuid().optional(),
+      template_file_id: z.string().uuid().optional(),
       slide_mode: z.enum(["html", "image"]).default("html"),
       idempotency_key: z.string().min(8).optional()
     },
@@ -433,6 +441,8 @@ export function createToseaServer(config: ClientConfig, fetchImpl?: FetchLike): 
       slide_domain,
       page_count_range,
       template_name,
+      logo_file_id,
+      template_file_id,
       slide_mode,
       idempotency_key
     }) => {
@@ -448,6 +458,8 @@ export function createToseaServer(config: ClientConfig, fetchImpl?: FetchLike): 
           slideDomain: slide_domain,
           pageCountRange: page_count_range,
           templateName: template_name,
+          logoFileId: logo_file_id,
+          templateFileId: template_file_id,
           slideMode: slide_mode,
           idempotencyKey: idempotency_key
         })

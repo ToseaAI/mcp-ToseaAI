@@ -170,6 +170,8 @@ export class ToseaClient {
     slideDomain?: string;
     pageCountRange?: string;
     templateName?: string;
+    logoFileId?: string | undefined;
+    templateFileId?: string | undefined;
     slideMode?: string;
     idempotencyKey?: string | undefined;
   }): Promise<ApiEnvelope<Record<string, unknown>>> {
@@ -184,6 +186,12 @@ export class ToseaClient {
     formData.set("slide_domain", input.slideDomain ?? "general");
     formData.set("page_count_range", input.pageCountRange ?? "8-12");
     formData.set("template_name", input.templateName ?? "beamer_classic");
+    if (input.logoFileId) {
+      formData.set("logo_file_id", input.logoFileId);
+    }
+    if (input.templateFileId) {
+      formData.set("template_file_id", input.templateFileId);
+    }
     formData.set("slide_mode", input.slideMode ?? "html");
 
     return this.request("/pdf-parse", {
@@ -317,6 +325,8 @@ export class ToseaClient {
     slideDomain?: string;
     pageCountRange?: string;
     templateName?: string;
+    logoFileId?: string | undefined;
+    templateFileId?: string | undefined;
     slideMode?: string;
     idempotencyKey?: string | undefined;
   }): Promise<ApiEnvelope<Record<string, unknown>>> {
@@ -335,6 +345,12 @@ export class ToseaClient {
     formData.set("slide_domain", input.slideDomain ?? "general");
     formData.set("page_count_range", input.pageCountRange ?? "8-12");
     formData.set("template_name", input.templateName ?? "beamer_classic");
+    if (input.logoFileId) {
+      formData.set("logo_file_id", input.logoFileId);
+    }
+    if (input.templateFileId) {
+      formData.set("template_file_id", input.templateFileId);
+    }
     formData.set("slide_mode", input.slideMode ?? "html");
 
     return this.request("/pdf-to-presentation", {

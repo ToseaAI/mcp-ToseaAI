@@ -112,6 +112,29 @@ If an MCP client downloads a finished export and then relays it through OpenClaw
 - preserve filename, extension, and `Content-Type` when re-uploading the artifact
 - do not repackage the file as an anonymous binary attachment, or downstream clients may show only a generic attachment label
 
+## Asset file_id inputs
+
+- `logo_file_id` is the `file_id` of a previously confirmed uploaded logo asset. It is not a local path.
+- `template_file_id` is the `file_id` of a previously confirmed uploaded PPTX/PDF custom-template asset. It is not a source document path.
+- `template_file_id` is valid only with `slide_mode="image"`.
+- When `template_file_id` is present, the backend treats the request as `custom_template` automatically.
+- This MCP package does not mint those asset IDs itself yet. Reuse IDs created through the scripts-first skill or another upload-capable product flow.
+
+## Upload constraints
+
+- `page_count_range` must be one of `4-8`, `8-12`, `12-16`, `16-20`, `20-30`, `30-40`, `40-50`, or `50-100`.
+- Source-file count and total source-page limits are enforced by backend tier policy.
+- The current default/free backend policy is `1` source file and `60` total source pages unless the server-side policy overrides it.
+
+## Image mode decision rule
+
+- keep `slide_mode="html"` by default
+- use `slide_mode="image"` only when the user explicitly wants image-mode rendering or image-first slide composition
+- when using image mode, pass `image_model` if the user cares about image quality or regeneration consistency
+- use `output_format="pptx_image"` when the user wants a pure image-based PPTX export
+- use `output_format="pdf"` for image-mode review handoff
+- do not use `output_format="html_zip"` for image-mode decks
+
 ## Security notes
 
 - API keys must start with `sk_`.
