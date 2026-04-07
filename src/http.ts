@@ -17,6 +17,9 @@ import type {
 } from "./types.js";
 import { appendFilesToFormData } from "./uploads.js";
 
+const MCP_CLIENT_NAME = "@tosea-ai/mcp-toseaai";
+const MCP_CLIENT_VERSION = process.env.TOSEA_MCP_CLIENT_VERSION || "0.1.0";
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -75,6 +78,8 @@ async function parseResponseBody<T>(
 }
 
 export class ToseaClient {
+  private readonly clientSessionId = randomUUID();
+
   constructor(
     private readonly config: ClientConfig,
     private readonly fetchImpl: FetchLike = fetch
@@ -132,6 +137,24 @@ export class ToseaClient {
     });
   }
 
+  async getDocumentParseStatus(
+    documentParseId: string
+  ): Promise<ApiEnvelope<JobResult>> {
+    return this.request(`/document-parses/${documentParseId}`, {
+      method: "GET",
+      retryMode: "safe"
+    });
+  }
+
+  async getDocumentParseResult(
+    documentParseId: string
+  ): Promise<ApiEnvelope<Record<string, unknown>>> {
+    return this.request(`/document-parses/${documentParseId}/result`, {
+      method: "GET",
+      retryMode: "safe"
+    });
+  }
+
   async waitForJob(
     presentationId: string,
     options: WaitForJobOptions = {}
@@ -159,6 +182,76 @@ export class ToseaClient {
     throw new JobTimeoutError(
       `Timed out waiting for presentation ${presentationId} after ${timeoutMs} ms`
     );
+  }
+
+  async waitForDocumentParse(
+    documentParseId: string,
+    options: WaitForJobOptions = {}
+  ): Promise<{ completed: boolean; terminal_status: string; final_status: JobResult }> {
+    const timeoutMs = options.timeoutMs ?? 15 * 60_000;
+    let intervalMs = options.pollIntervalMs ?? this.config.pollIntervalMs;
+    const maxIntervalMs = options.maxPollIntervalMs ?? this.config.maxPollIntervalMs;
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const envelope = await this.getDocumentParseStatus(documentParseId);
+      const payload = envelope.data ?? {};
+      const terminalStatus = resolveJobStatus(payload);
+      if (terminalStatus === "completed" || terminalStatus === "failed" || terminalStatus === "cancelled") {
+        return {
+          completed: terminalStatus === "completed",
+          terminal_status: terminalStatus,
+          final_status: payload
+        };
+      }
+      await sleep(withJitter(intervalMs));
+      intervalMs = Math.min(maxIntervalMs, Math.round(intervalMs * 1.5));
+    }
+
+    throw new JobTimeoutError(
+      `Timed out waiting for document parse ${documentParseId} after ${timeoutMs} ms`
+    );
+  }
+
+  async createDocumentParse(input: {
+    filePaths: string[];
+    instruction?: string;
+    renderProvider?: string;
+    renderModel?: string;
+    imageModel?: string | undefined;
+    slideDomain?: string;
+    pageCountRange?: string;
+    templateName?: string;
+    logoFileId?: string | undefined;
+    templateFileId?: string | undefined;
+    slideMode?: string;
+    idempotencyKey?: string | undefined;
+  }): Promise<ApiEnvelope<Record<string, unknown>>> {
+    const formData = new FormData();
+    await appendFilesToFormData(formData, input.filePaths);
+    formData.set("instruction", input.instruction ?? "");
+    formData.set("render_provider", input.renderProvider ?? "default");
+    formData.set("render_model", input.renderModel ?? "deepseek-chat-v3.1");
+    if (input.imageModel) {
+      formData.set("image_model", input.imageModel);
+    }
+    formData.set("slide_domain", input.slideDomain ?? "general");
+    formData.set("page_count_range", input.pageCountRange ?? "8-12");
+    formData.set("template_name", input.templateName ?? "beamer_classic");
+    if (input.logoFileId) {
+      formData.set("logo_file_id", input.logoFileId);
+    }
+    if (input.templateFileId) {
+      formData.set("template_file_id", input.templateFileId);
+    }
+    formData.set("slide_mode", input.slideMode ?? "html");
+
+    return this.request("/document-parses", {
+      method: "POST",
+      formData,
+      ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+      retryMode: "never"
+    });
   }
 
   async pdfParse(input: {
@@ -296,6 +389,27 @@ export class ToseaClient {
     );
   }
 
+  async switchTemplate(input: {
+    presentationId: string;
+    templateName?: string | undefined;
+    userTemplateId?: string | undefined;
+    systemTemplateKey?: string | undefined;
+    renderModel?: string | undefined;
+    logoFileId?: string | undefined;
+  }): Promise<ApiEnvelope<Record<string, unknown>>> {
+    return this.request(`/presentations/${input.presentationId}/switch-template`, {
+      method: "POST",
+      body: {
+        template_name: input.templateName ?? undefined,
+        user_template_id: input.userTemplateId ?? undefined,
+        system_template_key: input.systemTemplateKey ?? undefined,
+        render_model: input.renderModel ?? undefined,
+        logo_file_id: input.logoFileId ?? undefined
+      },
+      retryMode: "never"
+    });
+  }
+
   async exportPresentation(input: {
     presentationId: string;
     outputFormat: "pdf" | "pptx" | "pptx_image" | "html_zip";
@@ -404,9 +518,16 @@ export class ToseaClient {
       );
 
       try {
+        const invocationId = randomUUID();
         const headers = new Headers({
           Authorization: `Bearer ${this.config.apiKey}`,
-          Accept: "application/json"
+          Accept: "application/json",
+          "X-Tosea-Client-Channel": "mcp",
+          "X-Tosea-Client-Name": MCP_CLIENT_NAME,
+          "X-Tosea-Client-Version": MCP_CLIENT_VERSION,
+          "X-Tosea-Client-Session-ID": this.clientSessionId,
+          "X-Tosea-Invocation-ID": invocationId,
+          "X-Tosea-Operation-Name": deriveOperationName(method, path)
         });
         if (options.idempotencyKey) {
           headers.set("X-Idempotency-Key", options.idempotencyKey);
@@ -493,4 +614,15 @@ export class ToseaClient {
       path
     });
   }
+}
+
+function deriveOperationName(method: string, path: string): string {
+  const normalizedPath = path
+    .replace(/\/+/g, "/")
+    .replace(/^\/|\/$/g, "")
+    .replace(/[{}]/g, "")
+    .replace(/-/g, "_")
+    .replace(/\//g, "_");
+  const base = normalizedPath || "root";
+  return `${method.toLowerCase()}_${base}`.replace(/_+/g, "_");
 }

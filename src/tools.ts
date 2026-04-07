@@ -77,6 +77,16 @@ function normalizeSlideNumbers(slides: number[] | undefined): number[] | undefin
   return [...new Set(slides)].sort((a, b) => a - b);
 }
 
+function countTemplateSources(
+  templateName?: string,
+  userTemplateId?: string,
+  systemTemplateKey?: string
+): number {
+  return [templateName, userTemplateId, systemTemplateKey].filter(
+    (value) => typeof value === "string" && value.trim().length > 0
+  ).length;
+}
+
 const pageCountRangeSchema = z.enum([
   "4-8",
   "8-12",
@@ -193,6 +203,156 @@ export function createToseaServer(config: ClientConfig, fetchImpl?: FetchLike): 
         () => client.getPresentationFullData(presentation_id),
         buildReadOnlyDedupeKey("tosea_get_presentation_full_data", {
           presentation_id
+        })
+      );
+    }
+  );
+
+  server.tool(
+    "tosea_switch_template",
+    "Fork an existing presentation into a new presentation using exactly one template source: template_name, user_template_id, or system_template_key.",
+    {
+      presentation_id: z.string().uuid(),
+      template_name: z.string().min(1).optional(),
+      user_template_id: z.string().uuid().optional(),
+      system_template_key: z.string().min(1).optional(),
+      render_model: z.string().optional(),
+      logo_file_id: z.string().uuid().optional()
+    },
+    async ({
+      presentation_id,
+      template_name,
+      user_template_id,
+      system_template_key,
+      render_model,
+      logo_file_id
+    }) => {
+      if (countTemplateSources(template_name, user_template_id, system_template_key) !== 1) {
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          "Exactly one of template_name, user_template_id, or system_template_key must be provided."
+        );
+      }
+
+      return await runMutating(
+        () =>
+          client.switchTemplate({
+            presentationId: presentation_id,
+            templateName: template_name,
+            userTemplateId: user_template_id,
+            systemTemplateKey: system_template_key,
+            renderModel: render_model,
+            logoFileId: logo_file_id
+          }),
+        presentation_id
+      );
+    }
+  );
+
+  server.tool(
+    "tosea_create_document_parse",
+    "Upload local source files and create a parse-only document job that can later return combined Markdown and extracted image URLs.",
+    {
+      file_paths: z.array(z.string().min(1)).min(1).max(10),
+      instruction: z.string().default(""),
+      render_provider: z.string().default("default"),
+      render_model: z.string().default("deepseek-chat-v3.1"),
+      image_model: z.string().optional(),
+      slide_domain: z.string().default("general"),
+      page_count_range: pageCountRangeSchema.default("8-12"),
+      template_name: z.string().default("beamer_classic"),
+      logo_file_id: z.string().uuid().optional(),
+      template_file_id: z.string().uuid().optional(),
+      slide_mode: z.enum(["html", "image"]).default("html"),
+      idempotency_key: z.string().min(8).optional()
+    },
+    async ({
+      file_paths,
+      instruction,
+      render_provider,
+      render_model,
+      image_model,
+      slide_domain,
+      page_count_range,
+      template_name,
+      logo_file_id,
+      template_file_id,
+      slide_mode,
+      idempotency_key
+    }) => {
+      return await runMutating(() =>
+        client.createDocumentParse({
+          filePaths: file_paths,
+          instruction,
+          renderProvider: render_provider,
+          renderModel: render_model,
+          imageModel: image_model,
+          slideDomain: slide_domain,
+          pageCountRange: page_count_range,
+          templateName: template_name,
+          logoFileId: logo_file_id,
+          templateFileId: template_file_id,
+          slideMode: slide_mode,
+          idempotencyKey: idempotency_key
+        })
+      );
+    }
+  );
+
+  server.tool(
+    "tosea_get_document_parse",
+    "Fetch parse job status for a document_parse_id without exposing presentation details.",
+    { document_parse_id: z.string().uuid() },
+    async ({ document_parse_id }) => {
+      return await runReadOnly(
+        () => client.getDocumentParseStatus(document_parse_id),
+        buildReadOnlyDedupeKey("tosea_get_document_parse", {
+          document_parse_id
+        })
+      );
+    }
+  );
+
+  server.tool(
+    "tosea_wait_for_document_parse",
+    "Poll a document parse job until completed, failed, or cancelled.",
+    {
+      document_parse_id: z.string().uuid(),
+      timeout_seconds: z.number().int().min(5).max(3600).default(900),
+      poll_interval_seconds: z.number().int().min(1).max(60).default(2),
+      max_poll_interval_seconds: z.number().int().min(1).max(120).default(10)
+    },
+    async ({
+      document_parse_id,
+      timeout_seconds,
+      poll_interval_seconds,
+      max_poll_interval_seconds
+    }) => {
+      return await runReadOnly(() =>
+        client.waitForDocumentParse(document_parse_id, {
+          timeoutMs: timeout_seconds * 1000,
+          pollIntervalMs: poll_interval_seconds * 1000,
+          maxPollIntervalMs: max_poll_interval_seconds * 1000
+        }),
+        buildReadOnlyDedupeKey("tosea_wait_for_document_parse", {
+          document_parse_id,
+          timeout_seconds,
+          poll_interval_seconds,
+          max_poll_interval_seconds
+        })
+      );
+    }
+  );
+
+  server.tool(
+    "tosea_get_document_parse_result",
+    "Fetch the final Markdown, per-file parse payloads, and extracted image URLs for a completed document parse job.",
+    { document_parse_id: z.string().uuid() },
+    async ({ document_parse_id }) => {
+      return await runReadOnly(
+        () => client.getDocumentParseResult(document_parse_id),
+        buildReadOnlyDedupeKey("tosea_get_document_parse_result", {
+          document_parse_id
         })
       );
     }

@@ -79,6 +79,11 @@ If you later need OpenAI Responses API hosted remote MCP mode, add a separate St
 - `tosea_get_quota_status`
 - `tosea_list_presentations`
 - `tosea_get_presentation_full_data`
+- `tosea_switch_template`
+- `tosea_create_document_parse`
+- `tosea_get_document_parse`
+- `tosea_wait_for_document_parse`
+- `tosea_get_document_parse_result`
 - `tosea_parse_pdf`
 - `tosea_generate_outline`
 - `tosea_edit_outline_page`
@@ -100,6 +105,8 @@ If you later need OpenAI Responses API hosted remote MCP mode, add a separate St
 - Upload-creating endpoints (`pdf-parse`, `pdf-to-presentation`) accept `idempotency_key`, but the MCP server still avoids silent auto-retries for large uploads by default.
 - `outline edit`, `slide edit`, and `export` support `idempotency_key`; reuse the same value only when retrying the same logical action.
 - `tosea_export_presentation` and `tosea_pdf_to_presentation` accept optional `export_filename` when the visible exported attachment name matters.
+- `tosea_create_document_parse` is the standalone Markdown/asset extraction facade. It returns `document_parse_id` and still uses the backend's existing auth, quota, and billing rules.
+- `tosea_parse_pdf` remains the staged presentation parse step for workflows that continue into outline generation and slide rendering.
 - `wait_for_job` follows nested `data.job.status` when the backend reports a separate export/full job, and falls back to top-level presentation status when no nested job exists.
 - `html_zip` export is supported for HTML-mode decks and remains a free export on the backend.
 - Stdio lifecycle is tied to the host process: the server shuts down on `stdin` close, `SIGINT`, and `SIGTERM`, and unexpected transport failures are surfaced as retryable host-transport errors instead of opaque raw exceptions.
